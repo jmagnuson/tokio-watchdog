@@ -89,7 +89,25 @@ impl Pet {
             // XXX
         }
     }
-    
+
+    /// Reset/restart the watchdog, plus set duration to new value
+    ///
+    /// Call it periodically from various places
+    pub fn pet_with_duration(&self, new_duration: Duration) {
+        if let Ok(mut g) = self.0.lock() {
+            g.dur = new_duration;
+
+            let i = Instant::now() + g.dur;
+            g.ins = i;
+            if let Some(ref mut x) = g.del {
+                x.reset(i);
+            }
+        } else {
+            // don't know what to do here
+            // XXX
+        }
+    }
+
     /// Get how much time remains before the watchdog activates
     ///
     /// None means it is already active
