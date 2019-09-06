@@ -13,8 +13,10 @@ use tokio_timer::Delay;
 use futures::Future;
 use futures::Async;
 
-use std::sync::Arc;
-use std::sync::Mutex;
+//use std::sync::Arc;
+//use std::sync::Mutex;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use std::time::{Duration, Instant};
 
@@ -27,8 +29,8 @@ struct Impl {
     ins : Instant,
 }
 
-type H = Arc<Mutex<Impl>>;
-//type H = Rc<RefCell<Impl>>>;
+//type H = Arc<Mutex<Impl>>;
+type H = Rc<RefCell<Impl>>;
 
 /// The main struct. A wrapper over `tokio_timer::Delay` that has handles that can `reset` it periodically.
 ///
@@ -41,11 +43,11 @@ impl Watchdog {
         let ins = Instant::now() + dur;
         let del = Delay::new(ins);
         let i = Impl { del:Some(del), dur, ins };
-        Watchdog(Arc::new(Mutex::new(i)))
+        Watchdog(Rc::new(RefCell::new(i)))
     }
     /// Get the duration. Returns 0 on internal error.
     pub fn duration(&self) -> Duration {
-        if let Ok(g) = self.0.lock() {
+        if let Ok(g) = self.0.try_borrow() {
             g.dur
         } else {
             Duration::from_secs(0)
@@ -53,7 +55,7 @@ impl Watchdog {
     }
     /// Set new duration, also adjusting the timer state
     pub fn set_duration(&mut self, dur: Duration) {
-        if let Ok(mut g) = self.0.lock() {
+        if let Ok(mut g) = self.0.try_borrow_mut() {
             g.ins = g.ins - g.dur + dur;
             g.dur = dur;
             let i = g.ins;
@@ -68,6 +70,12 @@ impl Watchdog {
     }
 }
 
+impl std::fmt::Debug for Watchdog {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Watchdog {{ ... }}")
+    }
+}
+
 /// A handle that allows to pacify the watchdog.
 ///
 /// It is not called `Handle` because of it would be too generic.
@@ -78,7 +86,7 @@ impl Pet {
     ///
     /// Call it periodically from various places
     pub fn pet(&self) {
-        if let Ok(mut g) = self.0.lock() {
+        if let Ok(mut g) = self.0.try_borrow_mut() {
             let i = Instant::now() + g.dur;
             g.ins = i;
             if let Some(ref mut x) = g.del {
@@ -94,7 +102,7 @@ impl Pet {
     ///
     /// Call it periodically from various places
     pub fn pet_with_duration(&self, new_duration: Duration) {
-        if let Ok(mut g) = self.0.lock() {
+        if let Ok(mut g) = self.0.try_borrow_mut() {
             g.dur = new_duration;
 
             let i = Instant::now() + g.dur;
@@ -114,7 +122,7 @@ impl Pet {
     ///
     /// Some(0) is returned on internal error
     pub fn get_remaining_time(&self) -> Option<Duration> {
-        if let Ok(g) = self.0.lock() {
+        if let Ok(g) = self.0.try_borrow() {
             let now = Instant::now();
             let i = g.ins;
             if now > i {
@@ -125,6 +133,12 @@ impl Pet {
         } else {
             Some(Duration::from_secs(0))
         }
+    }
+}
+
+impl std::fmt::Debug for Pet {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Pet {{ ... }}")
     }
 }
 
@@ -158,7 +172,7 @@ impl Future for Watchdog {
     type Error = tokio_timer::Error;
     
     fn poll(&mut self) -> futures::Poll<Rearm, tokio_timer::Error> {
-        if let Ok(mut g) = self.0.lock() {
+        if let Ok(mut g) = self.0.try_borrow_mut() {
             if let Some(ref mut d) = g.del {
                 match d.poll() {
                     Ok(Async::Ready(())) => Ok(Async::Ready(
